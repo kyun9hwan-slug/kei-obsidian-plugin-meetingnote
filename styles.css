@@ -1,0 +1,265 @@
+.meeting-notes-status {
+  font-variant-numeric: tabular-nums;
+}
+
+.meeting-notes-prompt {
+  width: 100%;
+  font-family: var(--font-monospace);
+  font-size: var(--font-ui-smaller);
+  resize: vertical;
+}
+
+.meeting-notes-picker {
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+.meeting-notes-picker-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 1em;
+  width: 100%;
+  text-align: left;
+  margin-bottom: 2px;
+  background: transparent;
+  box-shadow: none;
+}
+
+.meeting-notes-picker-item:hover {
+  background: var(--background-modifier-hover);
+}
+
+.meeting-notes-picker-size {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.meeting-notes-pre {
+  max-height: 60vh;
+  overflow: auto;
+  user-select: text;
+  font-size: var(--font-ui-smaller);
+}
+
+.meeting-notes-hint {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  margin-top: 0;
+}
+
+.meeting-notes-picker-item {
+  align-items: center;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: var(--radius-s);
+}
+
+.meeting-notes-picker-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- 우측 사이드바 녹음 패널 ---- */
+.meeting-notes-view {
+  padding: 16px 14px;
+  text-align: center;
+}
+
+.meeting-notes-view .mn-head {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.meeting-notes-view .mn-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-faint);
+  flex-shrink: 0;
+}
+
+.meeting-notes-view.is-recording .mn-dot {
+  background: var(--color-red);
+  animation: mn-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes mn-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
+}
+
+.meeting-notes-view .mn-timer {
+  font-size: 2.4em;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+  margin: 6px 0 2px;
+}
+
+.meeting-notes-view.is-recording .mn-timer {
+  color: var(--color-red);
+}
+
+.meeting-notes-view .mn-meta {
+  color: var(--text-normal);
+  font-size: var(--font-ui-small);
+  word-break: break-all;
+}
+
+.meeting-notes-view .mn-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 14px 0 10px;
+}
+
+.meeting-notes-view .mn-btn {
+  width: 100%;
+}
+
+.meeting-notes-view .mn-hint {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  line-height: 1.4;
+  word-break: break-all;
+}
+
+.meeting-notes-preview .setting-item-description {
+  font-family: var(--font-monospace);
+  font-size: var(--font-ui-smaller);
+  color: var(--text-accent);
+}
+
+/* ---- 입력 레벨 미터 ---- */
+.meeting-notes-view .mn-meter-wrap {
+  margin: 12px 0 2px;
+}
+
+.meeting-notes-view .mn-meter {
+  position: relative;
+  height: 10px;
+  border-radius: 5px;
+  background: var(--background-modifier-border);
+  overflow: hidden;
+}
+
+.meeting-notes-view .mn-meter-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0;
+  background: var(--color-green);
+  transition: width 60ms linear;
+}
+
+.meeting-notes-view .mn-meter-fill.is-hot {
+  background: var(--color-yellow);
+}
+
+.meeting-notes-view .mn-meter-fill.is-clip {
+  background: var(--color-red);
+}
+
+.meeting-notes-view .mn-meter-peak {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--text-normal);
+  transition: left 80ms linear;
+}
+
+.meeting-notes-view .mn-meter-scale {
+  position: relative;
+  height: 12px;
+  margin-top: 3px;
+}
+
+.meeting-notes-view .mn-meter-tick {
+  position: absolute;
+  transform: translateX(-50%);
+  font-size: 9px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.meeting-notes-view .mn-meter-text {
+  margin-top: 4px;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- 처리 진행률 ---- */
+.meeting-notes-view .mn-progress-wrap {
+  margin: 12px 0 2px;
+}
+
+.meeting-notes-view .mn-progress {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--background-modifier-border);
+  overflow: hidden;
+}
+
+.meeting-notes-view .mn-progress-fill {
+  height: 100%;
+  width: 0;
+  background: var(--interactive-accent);
+  transition: width 240ms ease-out;
+}
+
+/* ---- API 키 인식 상태 ---- */
+.meeting-notes-key-ok .setting-item-name {
+  color: var(--color-green);
+}
+
+.meeting-notes-key-missing .setting-item-name {
+  color: var(--color-red);
+}
+
+/* ---- 회의 언어 선택 (녹음 시작 버튼 아래) ---- */
+.meeting-notes-view .mn-lang {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 2px 0;
+}
+
+.meeting-notes-view .mn-lang-label {
+  font-size: var(--font-ui-small);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.meeting-notes-view .mn-lang select {
+  flex: 1;
+}
+
+.meeting-notes-view .mn-engine-hint {
+  text-align: left;
+  padding: 4px 6px;
+  border-radius: var(--radius-s);
+  background: var(--background-secondary);
+}
+
+.meeting-notes-view .mn-engine-hint.is-warn {
+  color: var(--color-orange);
+  background: rgba(var(--color-orange-rgb), 0.08);
+}
+
+/* 설정 화면 경고 문구 */
+.meeting-notes-warn {
+  color: var(--color-orange);
+  border-left: 3px solid var(--color-orange);
+  padding-left: 10px;
+}
