@@ -23,6 +23,116 @@ const nodePath = require('path');
 const { spawn } = require('child_process');
 const https = require('https');
 
+// ---------------------------------------------------------------- 플랫폼
+// 한 코드베이스로 macOS·Windows·Linux를 다 돌린다. OS에 묶인 것은 아래 네 가지뿐이다.
+const IS_WIN = process.platform === 'win32';
+const IS_MAC = process.platform === 'darwin';
+
+/** OS별 기본 경로. macOS GUI 앱은 PATH가 짧아서 Homebrew 절대경로를 쓰고, Windows는 PATH·흔한 설치 폴더에서 찾는다. */
+function platformDefaults() {
+  if (IS_WIN) {
+    const appData = process.env.APPDATA || nodePath.join(os.homedir(), 'AppData', 'Roaming');
+    const local = process.env.LOCALAPPDATA || nodePath.join(os.homedir(), 'AppData', 'Local');
+    return {
+      whisperBinary: 'whisper-cli.exe',
+      ffmpegBinary: 'ffmpeg.exe',
+      whisperModel: nodePath.join(local, 'whisper-models', 'ggml-large-v3-turbo.bin'),
+      configPath: nodePath.join(appData, 'obsidian-meeting-notes', 'config.json'),
+    };
+  }
+  if (IS_MAC) {
+    return {
+      whisperBinary: '/opt/homebrew/bin/whisper-cli',
+      ffmpegBinary: '/opt/homebrew/bin/ffmpeg',
+      whisperModel: '~/.local/share/whisper-models/ggml-large-v3-turbo.bin',
+      configPath: '~/.config/obsidian-meeting-notes/config.json',
+    };
+  }
+  return {
+    whisperBinary: 'whisper-cli',
+    ffmpegBinary: 'ffmpeg',
+    whisperModel: '~/.local/share/whisper-models/ggml-large-v3-turbo.bin',
+    configPath: '~/.config/obsidian-meeting-notes/config.json',
+  };
+}
+
+// Windows에서 흔히 설치되는 위치. PATH에 없을 때 마지막으로 뒤져 본다.
+function winExtraDirs() {
+  const local = process.env.LOCALAPPDATA || '';
+  const pf = process.env.ProgramFiles || 'C:\\Program Files';
+  return [
+    nodePath.join(local, 'whisper-cpp'), nodePath.join(local, 'Programs', 'whisper-cpp'),
+    nodePath.join(local, 'Microsoft', 'WinGet', 'Links'),
+    'C:\\ffmpeg\\bin', nodePath.join(pf, 'ffmpeg', 'bin'), nodePath.join(pf, 'whisper-cpp'), 'C:\\whisper-cpp',
+  ];
+}
+
+/**
+ * 실행 파일의 실제 경로를 찾는다. 경로 구분자가 있으면 그 자리를 확인하고,
+ * 이름만 있으면 PATH(+Windows PATHEXT)와 흔한 설치 폴더를 뒤진다. 못 찾으면 ''.
+ */
+function findExecutable(bin) {
+  if (!bin) return '';
+  const given = expandHome(String(bin).trim());
+  if (given.includes('/') || given.includes('\\')) return fs.existsSync(given) ? given : '';
+
+  const exts = IS_WIN
+    ? [''].concat((process.env.PATHEXT || '.EXE;.CMD;.BAT').split(';').map((e) => e.toLowerCase()))
+    : [''];
+  const dirs = (process.env.PATH || '').split(nodePath.delimiter).filter(Boolean);
+  if (IS_WIN) dirs.push(...winExtraDirs());
+  else dirs.push('/opt/homebrew/bin', '/usr/local/bin');
+
+  for (const dir of dirs) {
+    for (const ext of exts) {
+      const candidate = nodePath.join(dir, given + ext);
+      if (fs.existsSync(candidate)) return candidate;
+    }
+  }
+  return '';
+}
+
+/** 파일 위치를 OS 파일 탐색기에서 보여 준다. */
+function revealInFileManager(filePath) {
+  try {
+    if (IS_MAC) spawn('open', ['-R', filePath]);
+    else if (IS_WIN) spawn('explorer.exe', [`/select,${filePath}`]);
+    else spawn('xdg-open', [nodePath.dirname(filePath)]);
+  } catch (_) { /* 못 열어도 경로는 알림으로 보여 준다 */ }
+}
+
+// Windows: 프로세스가 살아 있는 동안 시스템 절전을 막는다. 죽이면 자동 해제된다.
+const WIN_KEEP_AWAKE_PS = [
+  "Add-Type -Namespace K -Name P -MemberDefinition '[DllImport(\"kernel32.dll\")] public static extern uint SetThreadExecutionState(uint f);'",
+  'while ($true) { [K.P]::SetThreadExecutionState(0x80000003) | Out-Null; Start-Sleep -Seconds 30 }',
+].join('; ');
+
+/** 녹음 중 절전 차단. macOS caffeinate / Windows SetThreadExecutionState / Linux systemd-inhibit. */
+class KeepAwake {
+  start() {
+    try {
+      if (IS_MAC) {
+        this.proc = spawn('caffeinate', ['-i']);
+      } else if (IS_WIN) {
+        this.proc = spawn('powershell.exe',
+          ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-Command', WIN_KEEP_AWAKE_PS],
+          { windowsHide: true });
+      } else {
+        this.proc = spawn('systemd-inhibit', ['--what=idle:sleep', '--who=Obsidian', '--why=recording', 'sleep', 'infinity']);
+      }
+      this.proc.on('error', () => { this.proc = null; });
+    } catch (_) {
+      this.proc = null;
+    }
+  }
+
+  stop() {
+    if (!this.proc) return;
+    try { this.proc.kill(); } catch (_) { /* 이미 종료 */ }
+    this.proc = null;
+  }
+}
+
 const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta';
 // 파일 업로드는 일반 API가 아니라 /upload/ 접두사가 붙은 미디어 엔드포인트를 쓴다.
 const GEMINI_UPLOAD_BASE = 'https://generativelanguage.googleapis.com/upload/v1beta';
@@ -100,14 +210,11 @@ const DEFAULT_CONTEXT_PROMPT = [
 const DEFAULT_SETTINGS = {
   // 전사: 'whisper'(로컬·무료·화자 구분 없음) | 'gemini'(API·화자 구분) | 'openai'(API)
   sttEngine: 'whisper',
-  whisperBinary: '/opt/homebrew/bin/whisper-cli',
-  whisperModel: '~/.local/share/whisper-models/ggml-large-v3-turbo.bin',
-  ffmpegBinary: '/opt/homebrew/bin/ffmpeg',
+  ...platformDefaults(),
   whisperThreads: 0,
   whisperTermPrompt: true,
   // 회의 언어: 'ko' | 'en' | 'mixed'. 사이드바에서 녹음 직전에 바꾼다.
   spokenLanguage: 'ko',
-  configPath: '~/.config/obsidian-meeting-notes/config.json',
   geminiApiKey: '',
   openaiApiKey: '',
   geminiSttModel: 'gemini-3.5-transcribe',
@@ -305,7 +412,7 @@ class KeyStore {
     if (!fs.existsSync(p)) {
       fs.writeFileSync(p, `${JSON.stringify({ geminiApiKey: '', openaiApiKey: '' }, null, 2)}\n`, { mode: 0o600 });
     }
-    fs.chmodSync(p, 0o600);
+    try { fs.chmodSync(p, 0o600); } catch (_) { /* Windows는 POSIX 권한이 없다 */ }
     return p;
   }
 }
@@ -595,11 +702,15 @@ class WhisperProvider {
   check() {
     const s = this.plugin.settings;
     const problems = [];
-    const whisper = expandHome(s.whisperBinary);
-    const ffmpeg = expandHome(s.ffmpegBinary);
+    const whisper = findExecutable(s.whisperBinary);
+    const ffmpeg = findExecutable(s.ffmpegBinary);
     const model = expandHome(s.whisperModel);
-    if (!fs.existsSync(whisper)) problems.push(`whisper 실행 파일이 없습니다: ${whisper}\n  brew install whisper-cpp`);
-    if (!fs.existsSync(ffmpeg)) problems.push(`ffmpeg이 없습니다: ${ffmpeg}\n  brew install ffmpeg`);
+    const howWhisper = IS_WIN
+      ? 'https://github.com/ggml-org/whisper.cpp/releases 에서 whisper-bin-x64.zip을 받아 풀고, 설정에 whisper-cli.exe 전체 경로를 넣으세요'
+      : IS_MAC ? 'brew install whisper-cpp' : '배포판 패키지 또는 https://github.com/ggml-org/whisper.cpp 빌드';
+    const howFfmpeg = IS_WIN ? 'winget install Gyan.FFmpeg  (설치 후 Obsidian 재시작)' : IS_MAC ? 'brew install ffmpeg' : 'sudo apt install ffmpeg';
+    if (!whisper) problems.push(`whisper 실행 파일을 찾을 수 없습니다: ${s.whisperBinary}\n  ${howWhisper}`);
+    if (!ffmpeg) problems.push(`ffmpeg을 찾을 수 없습니다: ${s.ffmpegBinary}\n  ${howFfmpeg}`);
     if (!fs.existsSync(model)) {
       problems.push(`whisper 모델 파일이 없습니다: ${model}\n  다운로드: https://huggingface.co/ggerganov/whisper.cpp/resolve/main/${nodePath.basename(model)}`);
     }
@@ -619,7 +730,7 @@ class WhisperProvider {
       fs.writeFileSync(source, Buffer.from(part.bytes));
 
       onProgress('오디오 변환 중', 0.03);
-      await runCommand(expandHome(s.ffmpegBinary),
+      await runCommand(findExecutable(s.ffmpegBinary),
         ['-loglevel', 'error', '-y', '-i', source, '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', wav]);
 
       const args = [
@@ -637,7 +748,7 @@ class WhisperProvider {
 
       onProgress('전사 중 0%', 0.1);
       let seen = 0;
-      const text = await runCommand(expandHome(s.whisperBinary), args, (chunk) => {
+      const text = await runCommand(findExecutable(s.whisperBinary), args, (chunk) => {
         // whisper_print_progress_callback: progress =  42%
         const matches = chunk.match(/progress\s*=\s*(\d+)%/g);
         if (!matches) return;
@@ -671,7 +782,7 @@ class Recorder {
     this.pausedMs = 0;
     this.pausedAt = 0;
     this.rotateTimer = null;
-    this.caffeinate = null;
+    this.keepAwake = new KeepAwake();
   }
 
   static pickMime() {
@@ -702,9 +813,10 @@ class Recorder {
       this.stream = await navigator.mediaDevices.getUserMedia({ audio });
     } catch (e) {
       if (e && (e.name === 'NotAllowedError' || e.name === 'SecurityError')) {
-        throw new LectureError(
-          '마이크 권한이 없습니다.\n시스템 설정 → 개인정보 보호 및 보안 → 마이크에서 Obsidian을 켠 뒤 앱을 재시작하세요.',
-        );
+        const where = IS_WIN
+          ? 'Windows 설정 → 개인 정보 및 보안 → 마이크에서 데스크톱 앱의 마이크 접근을 허용'
+          : IS_MAC ? '시스템 설정 → 개인정보 보호 및 보안 → 마이크에서 Obsidian을 허용' : '시스템 마이크 권한을 확인';
+        throw new LectureError(`마이크 권한이 없습니다.\n${where}한 뒤 앱을 재시작하세요.`);
       }
       if (e && e.name === 'NotFoundError') {
         throw new LectureError('선택한 입력 장치를 찾을 수 없습니다. 설정에서 입력 장치를 다시 고르세요.');
@@ -731,10 +843,8 @@ class Recorder {
       throw new LectureError(`녹음기를 시작할 수 없습니다: ${e.message}`);
     }
 
-    if (s.keepAwake) {
-      // 녹음 도중 맥북이 잠들면 스트림이 끊긴다.
-      try { this.caffeinate = spawn('caffeinate', ['-i']); } catch (_) { this.caffeinate = null; }
-    }
+    // 녹음 도중 컴퓨터가 잠들면 스트림이 끊긴다.
+    if (s.keepAwake) this.keepAwake.start();
   }
 
   /**
@@ -844,7 +954,7 @@ class Recorder {
     await this.stopPart();
     this.detachAnalyser();
     if (this.stream) this.stream.getTracks().forEach((t) => t.stop());
-    if (this.caffeinate) { try { this.caffeinate.kill(); } catch (_) { /* 이미 종료 */ } this.caffeinate = null; }
+    this.keepAwake.stop();
     return { blobs: this.blobs, durationMs, mime: this.mime || 'audio/webm' };
   }
 }
@@ -1595,7 +1705,7 @@ module.exports = class MeetingNotesPlugin extends Plugin {
     try {
       const p = this.keys.scaffold();
       new Notice(`키 파일을 준비했습니다:\n${p}\n이 파일을 열어 API 키를 채우세요.`, 10000);
-      spawn('open', ['-R', p]);
+      revealInFileManager(p);
     } catch (e) {
       new Notice(`키 파일 생성 실패: ${e.message}`, 10000);
     }
@@ -1607,8 +1717,9 @@ module.exports = class MeetingNotesPlugin extends Plugin {
     const problems = provider.check();
     const s = this.settings;
     const lines = [
-      `whisper : ${expandHome(s.whisperBinary)}`,
-      `ffmpeg  : ${expandHome(s.ffmpegBinary)}`,
+      `OS      : ${process.platform} ${os.arch()}`,
+      `whisper : ${findExecutable(s.whisperBinary) || `${s.whisperBinary} (못 찾음)`}`,
+      `ffmpeg  : ${findExecutable(s.ffmpegBinary) || `${s.ffmpegBinary} (못 찾음)`}`,
       `모델    : ${expandHome(s.whisperModel)}`,
       '',
     ];
@@ -1623,7 +1734,7 @@ module.exports = class MeetingNotesPlugin extends Plugin {
     const sizeMb = (fs.statSync(model).size / 1024 / 1024).toFixed(0);
     lines.push('✅ 준비 완료', '', `모델 크기: ${sizeMb} MB`);
     try {
-      const out = await runCommand(expandHome(s.ffmpegBinary), ['-version']);
+      const out = await runCommand(findExecutable(s.ffmpegBinary), ['-version']);
       lines.push(`ffmpeg: ${out.split('\n')[0]}`);
     } catch (e) {
       lines.push(`ffmpeg 버전 확인 실패: ${e.message}`);
@@ -2319,7 +2430,7 @@ class MeetingNotesSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('전사 엔진')
-      .setDesc('whisper는 무료이고 오디오가 맥 밖으로 나가지 않지만 발언자를 나누지 않습니다. 여러 명이 번갈아 말하는 회의라면 Gemini API를 권장합니다.')
+      .setDesc('whisper는 무료이고 오디오가 이 컴퓨터 밖으로 나가지 않지만 발언자를 나누지 않습니다. 여러 명이 번갈아 말하는 회의라면 Gemini API를 권장합니다.')
       .addDropdown((d) => d
         .addOption('whisper', '로컬 whisper.cpp (무료 · 화자 구분 없음)')
         .addOption('gemini', 'Gemini API (화자 구분 지원)')
@@ -2481,7 +2592,7 @@ class MeetingNotesSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('녹음 중 절전 방지')
-      .setDesc('caffeinate로 맥북이 잠들어 녹음이 끊기는 것을 막습니다.')
+      .setDesc('녹음 중 컴퓨터가 잠들어 스트림이 끊기는 것을 막습니다 (macOS caffeinate · Windows SetThreadExecutionState).')
       .addToggle((t) => t.setValue(cfg.keepAwake).onChange(async (v) => { cfg.keepAwake = v; await save(); }));
 
     // ---- 저장 위치
@@ -2646,11 +2757,13 @@ class MeetingNotesSettingTab extends PluginSettingTab {
 
   /** 경로 입력 칸. 존재 여부를 설명란에 바로 보여 준다. */
   pathSetting(containerEl, name, key) {
-    const value = expandHome(this.plugin.settings[key]);
-    const ok = fs.existsSync(value);
+    const raw = this.plugin.settings[key];
+    const resolved = key === 'whisperModel'
+      ? (fs.existsSync(expandHome(raw)) ? expandHome(raw) : '')
+      : findExecutable(raw);
     new Setting(containerEl)
       .setName(name)
-      .setDesc(ok ? '✅ 확인됨' : '❌ 파일을 찾을 수 없습니다')
+      .setDesc(resolved ? `✅ ${resolved}` : (IS_WIN ? '❌ 찾을 수 없습니다 — 전체 경로를 넣거나 PATH에 추가하세요' : '❌ 파일을 찾을 수 없습니다'))
       .addText((t) => t
         .setValue(this.plugin.settings[key])
         .onChange(async (v) => {

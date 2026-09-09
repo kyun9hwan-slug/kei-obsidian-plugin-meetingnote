@@ -5,7 +5,7 @@
 
 ## 설치
 
-**요구 사항**: macOS (데스크톱 전용), Obsidian 1.5 이상. 로컬 전사를 쓰려면 Homebrew.
+**요구 사항**: macOS 또는 Windows (데스크톱 전용), Obsidian 1.5 이상. 로컬 전사를 쓰려면 whisper.cpp와 ffmpeg (아래 참고).
 
 - **BRAT**: *Add Beta plugin* → `kyun9hwan-slug/kei-obsidian-plugin-meetingnote`
 - **수동**: [Releases](https://github.com/kyun9hwan-slug/kei-obsidian-plugin-meetingnote/releases)에서 `main.js` `manifest.json` `styles.css`를 받아 `.obsidian/plugins/meeting-notes/`에 넣기
@@ -38,6 +38,33 @@ mkdir -p ~/.local/share/whisper-models
 curl -L -o ~/.local/share/whisper-models/ggml-large-v3-turbo.bin \
   https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin   # 1.6GB
 ```
+
+
+### Windows
+
+macOS와 같은 코드가 그대로 돈다. 다른 것은 로컬 whisper 준비 방법과 키 파일 위치뿐이다.
+
+```powershell
+# ffmpeg
+winget install Gyan.FFmpeg          # 설치 후 Obsidian 재시작 (PATH 반영)
+
+# whisper.cpp — 릴리스에서 Windows 바이너리를 받는다
+# https://github.com/ggml-org/whisper.cpp/releases  →  whisper-bin-x64.zip
+# 압축을 풀고 whisper-cli.exe 위치를 기억해 둔다 (예: C:\whisper-cpp\whisper-cli.exe)
+
+# 모델
+mkdir "$env:LOCALAPPDATA\whisper-models"
+curl -L -o "$env:LOCALAPPDATA\whisper-models\ggml-large-v3-turbo.bin" `
+  https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin
+```
+
+설정 → 전사에서 **whisper 실행 파일**에 `whisper-cli.exe`의 전체 경로를 넣고 **환경 점검**을 누른다.
+PATH나 흔한 설치 폴더(`%LOCALAPPDATA%\whisper-cpp`, `C:\ffmpeg\bin` 등)에 있으면 이름만으로도 찾는다.
+
+- 키 파일 위치: `%APPDATA%\obsidian-meeting-notes\config.json`
+- 절전 차단: PowerShell `SetThreadExecutionState`를 녹음 중에만 띄운다 (macOS의 `caffeinate`에 해당)
+- 마이크 권한: Windows 설정 → 개인 정보 및 보안 → 마이크 → 데스크톱 앱 허용
+- 성능: CPU 빌드 기준 M-시리즈 맥보다 느리다. 90분 회의에 5~15분 정도 잡으면 된다. NVIDIA GPU가 있으면 릴리스의 CUDA 빌드(`whisper-cublas-…zip`)가 훨씬 빠르다.
 
 ### 회의 언어
 
