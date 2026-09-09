@@ -984,7 +984,7 @@ class AudioPickerModal extends Modal {
     contentEl.createEl('h3', { text: '오디오 파일 선택' });
     contentEl.createEl('p', {
       cls: 'meeting-notes-hint',
-      text: '한 회의가 여러 파트로 나뉘어 있으면 모두 고르세요. 이름순으로 이어 붙입니다.',
+      text: '한 회의가 여러 파트로 나뉘어 있으면 모두 고르세요. 이름순으로 이어 붙입니다. 선택한 파일은 열어 둔 노트의 폴더로 옮겨집니다.',
     });
 
     const exts = ['webm', 'mp3', 'wav', 'm4a', 'ogg', 'flac', 'aac', 'mp4'];
@@ -1107,6 +1107,10 @@ class MeetingNotesView extends ItemView {
     });
     this.engineHint = btns.createDiv({ cls: 'mn-hint mn-engine-hint' });
 
+    // 예전에 녹음한 파일이나 외부에서 받은 녹음도 같은 파이프라인으로 태운다.
+    this.existingBtn = btns.createEl('button', { cls: 'mn-btn', text: '기존 오디오 파일로 정리' });
+    this.existingBtn.addEventListener('click', () => this.plugin.processExisting());
+
     this.pauseBtn = btns.createEl('button', { cls: 'mn-btn', text: '일시정지' });
     this.pauseBtn.addEventListener('click', () => this.plugin.togglePause());
 
@@ -1196,6 +1200,7 @@ class MeetingNotesView extends ItemView {
     }
 
     this.startBtn.toggle(!recording && !plugin.busy);
+    this.existingBtn.toggle(!recording && !plugin.busy);
     this.langRow.toggle(!recording && !plugin.busy);
     this.engineHint.toggle(!recording && !plugin.busy);
     if (!recording && !plugin.busy) {
@@ -1769,17 +1774,46 @@ module.exports = class MeetingNotesPlugin extends Plugin {
     const target = this.activeNoteContext();
     new AudioPickerModal(this, (files) => {
       if (!files.length) return;
-      new SessionModal(this, (session) => {
+      new SessionModal(this, async (session) => {
+        // 노트 옆에 녹음이 있어야 나중에 찾기 쉽다. 옮기지 못해도 정리는 계속한다.
+        let picked = files;
+        try {
+          picked = await this.moveAudioNextToNote(files, { targetPath: target.path, course: session.course });
+        } catch (e) {
+          this.reportError(e, '파일을 옮기지 못해 원래 위치에서 진행합니다.');
+        }
         this.runPipeline({
           course: session.course,
           title: session.title,
-          date: new Date(files[0].stat.mtime),
+          date: new Date(picked[0].stat.mtime),
           durationMs: 0,
-          files,
+          files: picked,
           targetPath: target.path,
         });
       }, { heading: '회의 노트 만들기', submit: '노트 만들기' }).open();
     }).open();
+  }
+
+  /**
+   * 기존 오디오를 대상 노트 폴더로 옮긴다.
+   * fileManager.renameFile은 볼트 안의 링크까지 따라 고쳐 주고, 같은 TFile 객체의 path를 갱신한다.
+   * 열어 둔 노트가 없고 고정 폴더 설정도 아니면 옮길 곳이 없으니 그대로 둔다.
+   */
+  async moveAudioNextToNote(files, session) {
+    if (!session.targetPath && this.settings.audioLocation !== 'fixed') return files;
+    const folder = normalizePath(this.audioFolderFor(session));
+    await this.ensureFolder(folder);
+
+    let moved = 0;
+    for (const file of files) {
+      const parent = file.parent ? normalizePath(file.parent.path) : '';
+      if (parent === folder) continue;
+      const dest = this.uniquePath(folder, file.basename, file.extension);
+      await this.app.fileManager.renameFile(file, dest);
+      moved += 1;
+    }
+    if (moved) new Notice(`오디오 ${moved}개를 ${folder}/ 로 옮겼습니다.`);
+    return files;
   }
 
   /** 자료 수집 → 전사 → 요약 → 노트 반영. 각 단계를 % 로 보고한다. */
