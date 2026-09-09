@@ -5,6 +5,22 @@
 
 ## 설치
 
+### 한 줄 설치
+
+AI 에이전트(Claude Code 등)에게 이 저장소 링크를 주고 "설치해 줘"라고 하면 [`AGENTS.md`](AGENTS.md)를 따라 아래를 실행합니다. 직접 하셔도 됩니다.
+
+```powershell
+# Windows
+irm https://raw.githubusercontent.com/kyun9hwan-slug/kei-obsidian-plugin-meetingnote/main/install.ps1 | iex
+```
+```bash
+# macOS / Linux
+curl -fsSL https://raw.githubusercontent.com/kyun9hwan-slug/kei-obsidian-plugin-meetingnote/main/install.sh | bash
+```
+
+플러그인 파일·ffmpeg·whisper.cpp·모델·키 파일 템플릿까지 한 번에 준비합니다. 볼트가 여럿이면 `-Vault` / `--vault`로 지정합니다. 끝나면 Obsidian을 재시작하고 API 키만 넣으면 됩니다.
+
+
 **요구 사항**: macOS 또는 Windows (데스크톱 전용), Obsidian 1.5 이상. 로컬 전사를 쓰려면 whisper.cpp와 ffmpeg (아래 참고).
 
 - **BRAT**: *Add Beta plugin* → `kyun9hwan-slug/kei-obsidian-plugin-meetingnote`
